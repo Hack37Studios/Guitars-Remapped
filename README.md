@@ -16,12 +16,18 @@ Run
 python main.py
 ```
 
-How it works
-- Detects controllers via `pygame.joystick`.
-- Use "Add Mapping" to capture a controller input, then enter the keyboard key to map to.
-- Save/load mapping profiles as JSON.
-- Click "Start Listening" to forward controller events as keyboard presses.
-
+ Build an EXE
+ 
+ 1. Install packaging tools:
+ ```
+ python -m pip install -r dev-requirements.txt
+ ```
+ 2. Build with PyInstaller:
+ ```
+ build_exe.bat
+ ```
+ 3. Find the executable in the `dist` folder.
+ 
 Notes
 - On Windows, controllers should appear as joysticks when connected (USB or Bluetooth).
 - If a mapping doesn't trigger, try refreshing joysticks and re-mapping.
