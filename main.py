@@ -205,73 +205,222 @@ class App(tk.Tk):
 
     def _create_guitar_mockup(self):
         c = self.guitar_canvas
-        c.delete('all')
-        
-        # Guitar dimensions
-        x_center = 90
-        
-        # Draw headstock (top)
-        c.create_polygon(x_center-12, 10, x_center-15, 35, x_center+15, 35, x_center+12, 10, 
-                        fill='#8b4513', outline='#d2691e', width=2)
+        c.delete("all")
+
+        x = 90
+
+    # -------------------
+    # Headstock (Les Paul style)
+    # -------------------
+        c.create_polygon(
+            x-18, 10,
+            x-25, 40,
+            x+25, 40,
+            x+18, 10,
+            fill="#111111",
+            outline="#cccccc",
+            width=2
+        )
+
         # tuning pegs
-        for i in range(6):
-            y_pos = 15 + i * 3
-            c.create_oval(x_center-18, y_pos, x_center-14, y_pos+2, fill='#cd853f', outline='#d2691e')
-        
-        # Neck (thin vertical line)
-        c.create_rectangle(x_center-8, 35, x_center+8, 420, fill='#8b4513', outline='#cd853f', width=1)
-        
-        # Frets on neck (5 frets vertically)
+        for i in range(3):
+            yy = 15 + i * 10
+
+            c.create_oval(
+                x-32, yy,
+                x-24, yy + 8,
+                fill="silver",
+                outline=""
+            )
+
+            c.create_oval(
+                x+24, yy,
+                x+32, yy + 8,
+                fill="silver",
+                outline=""
+            )
+
+        # -------------------
+        # Neck
+        # -------------------
+        c.create_rectangle(
+            x-12, 40,
+            x+12, 350,
+            fill="#5c3b20",
+            outline="#c89b63",
+            width=2
+        )
+
+        # fret markers
+        for y in range(70, 340, 35):
+            c.create_line(
+                x-12, y,
+                x+12, y,
+                fill="#d9d9d9"
+            )
+
+        # strings
+        for sx in [x-8, x-4, x, x+4, x+8]:
+            c.create_line(
+                sx, 40,
+                sx, 350,
+                fill="#d4af37"
+            )
+
+        # -------------------
+        # Colored frets
+        # -------------------
         self.fret_items = []
-        fret_colors = ['#1abc9c', '#e74c3c', '#f1c40f', '#3498db', '#e67e22']
-        fret_spacing = 75
-        fret_base_y = 80
-        fret_radius = 10
-        
-        for i in range(5):
-            y = fret_base_y + i * fret_spacing
-            item = c.create_oval(x_center-fret_radius, y-fret_radius, x_center+fret_radius, y+fret_radius, 
-                                fill=fret_colors[i], outline='#1a1a1a', width=2)
-            self.fret_items.append(('fret_' + str(i), item))
-        
-        # Strings (6 thin vertical lines on sides of neck)
-        for sx in [x_center-6, x_center-3, x_center, x_center+3, x_center+6]:
-            c.create_line(sx, 35, sx, 420, fill='#d4af37', width=1)
-        
-        # Guitar body (larger shape below neck)
-        # Create a rounded rectangular body
-        body_x = x_center - 25
-        body_y = 420
-        body_w = 50
-        body_h = 140
-        c.create_rectangle(body_x, body_y, body_x+body_w, body_y+body_h, fill='#8b4513', outline='#cd853f', width=2)
-        # Sound hole
-        c.create_oval(x_center-8, body_y+35, x_center+8, body_y+55, fill='#1a1a1a', outline='#cd853f', width=1)
-        
-        # Strum bar (below frets on neck area)
-        self.strum_up = c.create_polygon(x_center-20, 430, x_center-15, 445, x_center-10, 430, 
-                                        fill='#95a5a6', outline='#2d2d2d', width=2)
-        self.fret_items.append(('strum_up', self.strum_up))
-        c.create_text(x_center-15, 438, text='↑', fill='#1a1a1a', font=('Segoe UI', 10, 'bold'))
-        
-        self.strum_down = c.create_polygon(x_center-20, 480, x_center-15, 465, x_center-10, 480, 
-                                          fill='#95a5a6', outline='#2d2d2d', width=2)
-        self.fret_items.append(('strum_down', self.strum_down))
-        c.create_text(x_center-15, 473, text='↓', fill='#1a1a1a', font=('Segoe UI', 10, 'bold'))
-        
-        # Whammy bar (right side of body)
-        self.whammy = c.create_rectangle(x_center+20, body_y+30, x_center+25, body_y+70, 
-                                        fill='#95a5a6', outline='#2d2d2d', width=2)
-        self.fret_items.append(('whammy', self.whammy))
-        
-        # Start/Back buttons (small circles near top right of body)
-        self.start_btn_item = c.create_oval(x_center+10, body_y+10, x_center+18, body_y+18, 
-                                           fill='#7f8c8d', outline='#2d2d2d', width=2)
-        self.fret_items.append(('start', self.start_btn_item))
-        
-        self.back_btn_item = c.create_oval(x_center+10, body_y+25, x_center+18, body_y+33, 
-                                          fill='#7f8c8d', outline='#2d2d2d', width=2)
-        self.fret_items.append(('back', self.back_btn_item))
+
+        fret_colors = [
+            "#2ecc71",  # green
+            "#e74c3c",  # red
+            "#f1c40f",  # yellow
+            "#3498db",  # blue
+            "#e67e22"   # orange
+        ]
+
+        for i, color in enumerate(fret_colors):
+            yy = 90 + i * 45
+
+            item = c.create_oval(
+                x-14,
+                yy-14,
+                x+14,
+                yy+14,
+                fill=color,
+                outline="#111111",
+                width=2
+            )
+
+            self.fret_items.append((f"fret_{i}", item))
+
+        # -------------------
+        # Les Paul body
+        # -------------------
+        body = c.create_polygon(
+            x-55, 350,
+            x-80, 390,
+            x-75, 470,
+            x-50, 520,
+            x-10, 545,
+
+            x+10, 545,
+            x+50, 520,
+            x+75, 470,
+            x+80, 390,
+            x+55, 350,
+
+            fill="#111111",
+            outline="#dddddd",
+            width=3,
+            smooth=True
+        )
+
+        # cream pickguard
+        c.create_polygon(
+            x+5, 385,
+            x+45, 410,
+            x+30, 470,
+            x, 455,
+            fill="#f7f1d5",
+            outline="#cccccc"
+        )
+
+        # pickups
+        c.create_rectangle(
+            x-20, 390,
+            x+20, 410,
+            fill="silver",
+            outline="#444"
+        )
+
+        c.create_rectangle(
+            x-20, 435,
+            x+20, 455,
+            fill="silver",
+            outline="#444"
+        )
+
+        # bridge
+        c.create_rectangle(
+            x-25,
+            475,
+            x+25,
+            482,
+            fill="silver",
+            outline=""
+        )
+
+        # -------------------
+        # Strum bar
+        # -------------------
+        self.strum_up = c.create_rectangle(
+            x-45, 395,
+            x-20, 430,
+            fill="#7f8c8d",
+            outline="#2d2d2d",
+            width=2
+        )
+
+        self.fret_items.append(("strum_up", self.strum_up))
+
+        c.create_text(
+            x-32,
+            412,
+            text="▲",
+            fill="white",
+            font=("Segoe UI", 10, "bold")
+        )
+
+        self.strum_down = c.create_rectangle(
+            x-45, 435,
+            x-20, 470,
+            fill="#7f8c8d",
+            outline="#2d2d2d",
+            width=2
+        )
+
+        self.fret_items.append(("strum_down", self.strum_down))
+
+        c.create_text(
+            x-32,
+            452,
+            text="▼",
+            fill="white",
+            font=("Segoe UI", 10, "bold")
+        )
+
+        # -------------------
+        # Whammy Bar
+        # -------------------
+        self.whammy = c.create_line(
+            x+45, 420,
+            x+70, 500,
+            fill="silver",
+            width=4
+        )
+
+        self.fret_items.append(("whammy", self.whammy))
+
+        # -------------------
+        # Start / Back
+        # -------------------
+        self.start_btn_item = c.create_oval(
+            x+20, 365,
+            x+32, 377,
+            fill="#27ae60"
+        )
+
+        self.fret_items.append(("start", self.start_btn_item))
+
+        self.back_btn_item = c.create_oval(
+            x+38, 365,
+            x+50, 377,
+            fill="#c0392b"
+        )
+
+        self.fret_items.append(("back", self.back_btn_item))
 
     def _on_controller_event(self, event):
         # schedule UI update on main thread
