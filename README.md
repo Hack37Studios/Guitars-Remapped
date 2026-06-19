@@ -25,3 +25,8 @@ How it works
 Notes
 - On Windows, controllers should appear as joysticks when connected (USB or Bluetooth).
 - If a mapping doesn't trigger, try refreshing joysticks and re-mapping.
+ 
+UI Improvements
+- The app uses a cleaner `ttk` look and a larger layout for easier use.
+- A live guitar mockup on the right highlights fret buttons and strum actions as you press them on the controller.
+- Use the mockup to visually verify which controller inputs are being received while mapping.
