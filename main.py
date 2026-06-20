@@ -6,6 +6,11 @@ import tkinter as tk
 from tkinter import simpledialog, messagebox, filedialog
 from tkinter import ttk
 
+# Optional joystick name filter.
+# Set this to a list of substrings to include only matching device names.
+# Example: ['Santroller', 'Guitar']
+ALLOWED_JOYSTICK_NAME_SUBSTRINGS = ['Santroller', 'Guitar']
+
 try:
     import pygame
 except Exception:
@@ -18,11 +23,12 @@ except Exception:
 
 
 class ControllerMapper:
-    def __init__(self):
+    def __init__(self, device_name_filters=None):
         pygame.init()
         pygame.joystick.init()
         self.joysticks = []
         self.selected_joy_index = None
+        self.device_name_filters = [f.lower() for f in device_name_filters] if device_name_filters else None
         self._refresh_joysticks()
 
         self.capture_queue = queue.Queue()
@@ -44,6 +50,11 @@ class ControllerMapper:
         for i in range(pygame.joystick.get_count()):
             j = pygame.joystick.Joystick(i)
             j.init()
+            name = j.get_name() or ''
+            if self.device_name_filters:
+                normalized_name = name.lower()
+                if not any(filter_str in normalized_name for filter_str in self.device_name_filters):
+                    continue
             self.joysticks.append(j)
 
         if old_selected is None and self.joysticks:
@@ -277,7 +288,7 @@ class App(tk.Tk):
         style.configure('TLabelframe.Label', background='#1a1a1a', foreground='#ecf0f1')
         style.configure('TSeparator', background='#3a3a3a')
 
-        self.mapper = ControllerMapper()
+        self.mapper = ControllerMapper(device_name_filters=ALLOWED_JOYSTICK_NAME_SUBSTRINGS)
         self.mapper.register_ui_callback(self._on_controller_event)
 
         # Diagram button mapping: maps controller button index to diagram element name
