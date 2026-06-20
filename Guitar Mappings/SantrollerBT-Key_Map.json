@@ -1,0 +1,72 @@
+[
+  {
+    "type": "button",
+    "joy": 0,
+    "index": 12,
+    "key": "v"
+  },
+  {
+    "type": "button",
+    "joy": 0,
+    "index": 11,
+    "key": "c"
+  },
+  {
+    "type": "button",
+    "joy": 0,
+    "index": 10,
+    "key": "x"
+  },
+  {
+    "type": "button",
+    "joy": 0,
+    "index": 9,
+    "key": "z"
+  },
+  {
+    "type": "button",
+    "joy": 0,
+    "index": 8,
+    "key": "shift"
+  },
+  {
+    "type": "axis",
+    "joy": 0,
+    "index": 0,
+    "dir": 1,
+    "threshold": 0.2,
+    "key": "alt"
+  },
+  {
+    "type": "button",
+    "joy": 0,
+    "index": 1,
+    "key": "enter"
+  },
+  {
+    "type": "hat",
+    "joy": 0,
+    "index": 0,
+    "value": [
+      0,
+      1
+    ],
+    "key": "up"
+  },
+  {
+    "type": "hat",
+    "joy": 0,
+    "index": 0,
+    "value": [
+      0,
+      -1
+    ],
+    "key": "down"
+  },
+  {
+    "type": "button",
+    "joy": 0,
+    "index": 2,
+    "key": "esc"
+  }
+]
