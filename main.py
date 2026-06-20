@@ -28,6 +28,7 @@ class ControllerMapper:
         self.mappings = []
         self.running = False
         self.keyboard = KeyController()
+        self._pressed_keys = set()
         self.ui_callback = None
 
         self.poll_thread = threading.Thread(target=self._poll_loop, daemon=True)
@@ -47,6 +48,48 @@ class ControllerMapper:
         self._refresh_joysticks()
         return [j.get_name() for j in self.joysticks]
 
+    def capture_input(self, timeout=12):
+        if not self.joysticks:
+            return {}
+
+        baseline = []
+        pygame.event.pump()
+        for joy in self.joysticks:
+            baseline.append({
+                'buttons': [joy.get_button(i) for i in range(joy.get_numbuttons())],
+                'hats': [joy.get_hat(i) for i in range(joy.get_numhats())],
+                'axes': [joy.get_axis(i) for i in range(joy.get_numaxes())],
+            })
+
+        start = time.time()
+        while time.time() - start < timeout:
+            pygame.event.pump()
+            for joy_id, joy in enumerate(self.joysticks):
+                for i in range(joy.get_numbuttons()):
+                    value = joy.get_button(i)
+                    if value and not baseline[joy_id]['buttons'][i]:
+                        return {'type': 'button', 'joy': joy_id, 'index': i}
+
+                for i in range(joy.get_numhats()):
+                    value = joy.get_hat(i)
+                    if value != baseline[joy_id]['hats'][i]:
+                        return {'type': 'hat', 'joy': joy_id, 'index': i, 'value': list(value)}
+
+                for i in range(joy.get_numaxes()):
+                    value = joy.get_axis(i)
+                    prev = baseline[joy_id]['axes'][i]
+                    if abs(value - prev) > 0.25 and abs(value) > 0.2:
+                        return {
+                            'type': 'axis',
+                            'joy': joy_id,
+                            'index': i,
+                            'dir': 1 if value > prev else -1,
+                            'threshold': 0.2
+                        }
+            time.sleep(0.01)
+
+        return {}
+
     def _poll_loop(self):
         while True:
             for event in pygame.event.get():
@@ -62,7 +105,9 @@ class ControllerMapper:
                     try:
                         cb = self.capture_queue.get_nowait()
                         if cb:
-                            cb(event)
+                            complete = cb(event)
+                            if not complete:
+                                self.capture_queue.put(cb)
                     except Exception:
                         pass
 
@@ -72,24 +117,42 @@ class ControllerMapper:
             time.sleep(0.006)
 
     def _handle_event(self, event):
+        # Button press/release: hold while down, release on up
         if event.type == pygame.JOYBUTTONDOWN:
             for m in self.mappings:
                 if m['type'] == 'button' and m['joy'] == event.joy and m['index'] == event.button:
-                    self._send_key(m['key'])
+                    self._press_key(m['key'])
+        elif event.type == pygame.JOYBUTTONUP:
+            for m in self.mappings:
+                if m['type'] == 'button' and m['joy'] == event.joy and m['index'] == event.button:
+                    self._release_key(m['key'])
+
+        # Hat motion: press when value matches mapping, release otherwise
         elif event.type == pygame.JOYHATMOTION:
             for m in self.mappings:
-                if m['type'] == 'hat' and m['joy'] == event.joy and m['index'] == event.hat and tuple(m['value']) == tuple(event.value):
-                    self._send_key(m['key'])
+                if m['type'] == 'hat' and m['joy'] == event.joy and m['index'] == event.hat:
+                    if tuple(m['value']) == tuple(event.value):
+                        self._press_key(m['key'])
+                    else:
+                        self._release_key(m['key'])
+
+        # Axis motion: press while above threshold in the mapped direction, release when not
         elif event.type == pygame.JOYAXISMOTION:
             for m in self.mappings:
                 if m['type'] == 'axis' and m['joy'] == event.joy and m['index'] == event.axis:
                     dir = m.get('dir', 1)
                     thresh = m.get('threshold', 0.6)
                     val = event.value
-                    if dir > 0 and val > thresh:
-                        self._send_key(m['key'])
-                    if dir < 0 and val < -thresh:
-                        self._send_key(m['key'])
+                    if dir > 0:
+                        if val > thresh:
+                            self._press_key(m['key'])
+                        else:
+                            self._release_key(m['key'])
+                    else:
+                        if val < -thresh:
+                            self._press_key(m['key'])
+                        else:
+                            self._release_key(m['key'])
 
     def _send_key(self, key_name):
         try:
@@ -102,6 +165,38 @@ class ControllerMapper:
                 self.keyboard.release(key_name)
             except Exception:
                 print(f"Failed to send key {key_name}")
+
+    def _press_key(self, key_name):
+        # Idempotent press: only press if not already pressed
+        if key_name in self._pressed_keys:
+            return
+        try:
+            k = getattr(Key, key_name) if hasattr(Key, key_name) else key_name
+            self.keyboard.press(k)
+            self._pressed_keys.add(key_name)
+        except Exception:
+            try:
+                self.keyboard.press(key_name)
+                self._pressed_keys.add(key_name)
+            except Exception:
+                print(f"Failed to press key {key_name}")
+
+    def _release_key(self, key_name):
+        # Idempotent release: only release if currently pressed
+        if key_name not in self._pressed_keys:
+            return
+        try:
+            k = getattr(Key, key_name) if hasattr(Key, key_name) else key_name
+            self.keyboard.release(k)
+            self._pressed_keys.remove(key_name)
+        except Exception:
+            try:
+                self.keyboard.release(key_name)
+                self._pressed_keys.remove(key_name)
+            except Exception:
+                # ensure we don't leak state
+                self._pressed_keys.discard(key_name)
+                print(f"Failed to release key {key_name}")
 
     def stop(self):
         self.running = False
@@ -153,7 +248,11 @@ class App(tk.Tk):
             0: 'fret_0', 1: 'fret_1', 2: 'fret_2', 3: 'fret_3', 4: 'fret_4',
             5: 'strum_up', 6: 'strum_down', 7: 'whammy', 8: 'start', 9: 'back'
         }
-        self.configuring_diagram = False
+        self.diagram_elements = [
+            'fret_0', 'fret_1', 'fret_2', 'fret_3', 'fret_4',
+            'strum_up', 'strum_down', 'whammy', 'start', 'back'
+        ]
+        self.diagram_element_var = tk.StringVar(value=self.diagram_elements[0])
 
         self.create_widgets()
         self.refresh_joysticks()
@@ -191,7 +290,17 @@ class App(tk.Tk):
 
         self.start_btn = ttk.Button(left_panel, text='▶ Start Listening', command=self.toggle_start)
         self.start_btn.pack(fill='x', pady=(0, 4))
-        ttk.Button(left_panel, text='Configure Diagram', command=self.configure_diagram).pack(fill='x', pady=(0, 4))
+
+        ttk.Label(left_panel, text='Diagram Element', font=('Segoe UI', 10, 'bold')).pack(anchor='w', pady=(6, 4))
+        self.diagram_menu = ttk.OptionMenu(left_panel, self.diagram_element_var, self.diagram_elements[0], *self.diagram_elements)
+        self.diagram_menu.pack(fill='x')
+        ttk.Button(left_panel, text='Remap Selected Element', command=self.configure_diagram).pack(fill='x', pady=(4, 8))
+
+        ttk.Label(left_panel, text='Current Diagram Mapping', font=('Segoe UI', 10, 'bold')).pack(anchor='w', pady=(0, 4))
+        self.diagram_status = tk.Listbox(left_panel, bg='#2d2d2d', fg='#ecf0f1', font=('Segoe UI', 9), height=8)
+        self.diagram_status.pack(fill='both', expand=False, pady=(0, 4))
+        self.refresh_diagram_status()
+
         ttk.Button(left_panel, text='? Help', command=self.show_help).pack(fill='x')
 
         # RIGHT PANEL: guitar display (narrow)
@@ -430,40 +539,49 @@ class App(tk.Tk):
             pass
 
     def _handle_ui_event(self, event):
-        if self.configuring_diagram:
-            # During configuration, just capture the button and show it
-            if event.type == pygame.JOYBUTTONDOWN:
-                btn_idx = getattr(event, 'button', None)
-                if btn_idx is not None:
-                    messagebox.showinfo('Button Captured', f'Button {btn_idx} captured for diagram.')
-            return
-            
         c = self.guitar_canvas
         # button presses
+        element_name = None
         if event.type == pygame.JOYBUTTONDOWN:
             btn_idx = getattr(event, 'button', None)
-            if btn_idx is not None and btn_idx in self.diagram_button_map:
-                element_name = self.diagram_button_map[btn_idx]
-                # Find and highlight the element
-                for name, item_id in self.fret_items:
-                    if name == element_name:
-                        if name.startswith('fret_'):
-                            fret_num = int(name.split('_')[1])
-                            c.itemconfig(item_id, fill=self.FRET_COLORS[fret_num % len(self.FRET_COLORS)])
-                            self.after(180, lambda i=item_id, fn=fret_num: c.itemconfig(i, fill=self.FRET_COLORS[fn % len(self.FRET_COLORS)]))
-                        else:
-                            c.itemconfig(item_id, fill='#ecf0f1')
-                            self.after(140, lambda i=item_id: c.itemconfig(i, fill='#95a5a6'))
-                        break
+            if btn_idx is not None:
+                element_name = self.diagram_button_map.get(btn_idx)
         elif event.type == pygame.JOYHATMOTION:
-            # show strum up/down when hat moves
-            val = tuple(getattr(event, 'value', (0,0)))
+            key = f"hat_{event.hat}_{event.value[0]}_{event.value[1]}"
+            element_name = self.diagram_button_map.get(key)
+            val = tuple(getattr(event, 'value', (0, 0)))
             if val == (0, 1):
                 c.itemconfig(self.strum_up, fill='#ecf0f1')
                 self.after(140, lambda: c.itemconfig(self.strum_up, fill='#7f8c8d'))
-            if val == (0, -1):
+            elif val == (0, -1):
                 c.itemconfig(self.strum_down, fill='#ecf0f1')
                 self.after(140, lambda: c.itemconfig(self.strum_down, fill='#7f8c8d'))
+        elif event.type == pygame.JOYAXISMOTION:
+            key = None
+            if abs(event.value) > 0.7:
+                key = f"axis_{event.axis}_{1 if event.value > 0 else -1}"
+            if key is not None:
+                element_name = self.diagram_button_map.get(key)
+            val = getattr(event, 'value', 0)
+            if abs(val) > 0.7:
+                if val < 0:
+                    c.itemconfig(self.strum_up, fill='#ecf0f1')
+                    self.after(140, lambda: c.itemconfig(self.strum_up, fill='#7f8c8d'))
+                else:
+                    c.itemconfig(self.strum_down, fill='#ecf0f1')
+                    self.after(140, lambda: c.itemconfig(self.strum_down, fill='#7f8c8d'))
+
+        if element_name:
+            for name, item_id in self.fret_items:
+                if name == element_name:
+                    if name.startswith('fret_'):
+                        fret_num = int(name.split('_')[1])
+                        c.itemconfig(item_id, fill=self.FRET_COLORS[fret_num % len(self.FRET_COLORS)])
+                        self.after(180, lambda i=item_id, fn=fret_num: c.itemconfig(i, fill=self.FRET_COLORS[fn % len(self.FRET_COLORS)]))
+                    else:
+                        c.itemconfig(item_id, fill='#ecf0f1')
+                        self.after(140, lambda i=item_id: c.itemconfig(i, fill='#95a5a6'))
+                    break
         elif event.type == pygame.JOYAXISMOTION:
             # treat axis motion as strum if axis value large
             val = getattr(event, 'value', 0)
@@ -481,50 +599,32 @@ class App(tk.Tk):
         for n in names:
             self.jlist.insert(tk.END, n)
 
-    def add_mapping(self):
-        if not self.mapper.joysticks:
-            messagebox.showerror('No joystick', 'No joystick detected. Connect your guitar controller and click Refresh.')
-            return
+    def _start_capture_dialog(self, title, description, callback, timeout=8):
+        dialog = tk.Toplevel(self)
+        dialog.title(title)
+        dialog.geometry('360x120')
+        dialog.resizable(False, False)
+        dialog.configure(bg='#1a1a1a')
+        dialog.grab_set()
 
-        messagebox.showinfo('Capture', 'After closing this box, press the guitar control you want to map.')
+        ttk.Label(dialog, text=description, wraplength=340, justify='center', font=('Segoe UI', 10), background='#1a1a1a', foreground='#ecf0f1').pack(fill='both', expand=True, padx=12, pady=(12, 8))
+        status_label = ttk.Label(dialog, text='Listening for controller input...', font=('Segoe UI', 9), background='#1a1a1a', foreground='#95a5a6')
+        status_label.pack(fill='x', padx=12)
 
-        captured = {}
+        def finish(captured):
+            if dialog.winfo_exists():
+                dialog.destroy()
+            self.after(0, lambda: callback(captured))
 
-        def on_capture(event):
-            if event.type == pygame.JOYBUTTONDOWN:
-                captured.update({'type': 'button', 'joy': event.joy, 'index': event.button})
-            elif event.type == pygame.JOYHATMOTION:
-                captured.update({'type': 'hat', 'joy': event.joy, 'index': event.hat, 'value': list(event.value)})
-            elif event.type == pygame.JOYAXISMOTION:
-                dir = 1 if event.value > 0 else -1
-                captured.update({'type': 'axis', 'joy': event.joy, 'index': event.axis, 'dir': dir, 'threshold': 0.6})
+        def capture_worker():
+            captured = self.mapper.capture_input(timeout=timeout)
+            finish(captured)
 
-        # place callback and wait for event
-        done = threading.Event()
+        threading.Thread(target=capture_worker, daemon=True).start()
 
-        def waiter(ev):
-            on_capture(ev)
-            done.set()
-
-        try:
-            # flush any existing
-            while True:
-                self.mapper.capture_queue.get_nowait()
-        except Exception:
-            pass
-        self.mapper.capture_queue.put(waiter)
-
-        t0 = time.time()
-        while not done.is_set() and time.time() - t0 < 8:
-            time.sleep(0.01)
-
-        try:
-            self.mapper.capture_queue.get_nowait()
-        except Exception:
-            pass
-
+    def _finish_add_mapping(self, captured):
         if not captured:
-            messagebox.showwarning('Timeout', 'No controller input detected.')
+            messagebox.showwarning('Timeout', 'No controller input detected. Try pressing the control again.')
             return
 
         key = simpledialog.askstring('Keyboard Key', 'Enter the keyboard key or special key name (e.g. space, enter, left):')
@@ -537,6 +637,17 @@ class App(tk.Tk):
         self.mapper.add_mapping(mapping)
         self.refresh_map_list()
 
+    def add_mapping(self):
+        if not self.mapper.joysticks:
+            messagebox.showerror('No joystick', 'No joystick detected. Connect your guitar controller and click Refresh.')
+            return
+
+        self._start_capture_dialog(
+            'Capture Button',
+            'Press the guitar control you want to map now. The app will capture the first input detected.',
+            self._finish_add_mapping
+        )
+
     def refresh_map_list(self):
         self.map_list.delete(0, tk.END)
         for m in self.mapper.mappings:
@@ -546,6 +657,16 @@ class App(tk.Tk):
             if m['type'] == 'hat':
                 desc = f"hat{m['index']} value {m.get('value')} -> {m['key']}"
             self.map_list.insert(tk.END, desc)
+
+    def refresh_diagram_status(self):
+        self.diagram_status.delete(0, tk.END)
+        element_to_buttons = {}
+        for btn, element in self.diagram_button_map.items():
+            element_to_buttons.setdefault(element, []).append(str(btn))
+
+        for element in self.diagram_elements:
+            buttons = element_to_buttons.get(element, ['--'])
+            self.diagram_status.insert(tk.END, f"{element}: {', '.join(buttons)}")
 
     def remove_selected(self):
         sel = self.map_list.curselection()
@@ -582,58 +703,29 @@ class App(tk.Tk):
         if not self.mapper.joysticks:
             messagebox.showerror('No joystick', 'No joystick detected. Connect your guitar controller and click Refresh Devices.')
             return
-        
-        # List available diagram elements
-        diagram_elements = [
-            'fret_0', 'fret_1', 'fret_2', 'fret_3', 'fret_4',
-            'strum_up', 'strum_down', 'whammy', 'start', 'back'
-        ]
-        
-        # Create a simple dialog to select which element to configure
-        element = simpledialog.askstring(
-            'Configure Diagram',
-            'Which element to map?\n(fret_0-4, strum_up, strum_down, whammy, start, back)\n\nEnter element name:'
+
+        element = self.diagram_element_var.get()
+        self._start_capture_dialog(
+            'Capture Diagram Button',
+            f'Press the controller input you want to assign to: {element} now.',
+            lambda captured: self._finish_configure_diagram(captured, element)
         )
-        
-        if not element or element not in diagram_elements:
-            messagebox.showwarning('Invalid', 'Invalid element name.')
+
+    def _finish_configure_diagram(self, captured, element):
+        if not captured:
+            messagebox.showwarning('Timeout', 'No controller input detected in time. Try pressing the control again.')
             return
-        
-        messagebox.showinfo('Capture Button', f'Press the button on your controller for: {element}')
-        
-        captured_btn = None
-        done = threading.Event()
-        
-        def on_capture(event):
-            nonlocal captured_btn
-            if event.type == pygame.JOYBUTTONDOWN:
-                captured_btn = getattr(event, 'button', None)
-                done.set()
-        
-        try:
-            while True:
-                self.mapper.capture_queue.get_nowait()
-        except Exception:
-            pass
-        
-        self.mapper.capture_queue.put(on_capture)
-        
-        t0 = time.time()
-        while not done.is_set() and time.time() - t0 < 8:
-            time.sleep(0.01)
-        
-        try:
-            self.mapper.capture_queue.get_nowait()
-        except Exception:
-            pass
-        
-        if captured_btn is None:
-            messagebox.showwarning('Timeout', 'No button pressed in time.')
-            return
-        
-        # Map the button to the element
+
+        if captured['type'] == 'hat':
+            captured_btn = f"hat_{captured['index']}_{captured['value'][0]}_{captured['value'][1]}"
+        elif captured['type'] == 'axis':
+            captured_btn = f"axis_{captured['index']}_{captured['dir']}"
+        else:
+            captured_btn = captured['index']
+
         self.diagram_button_map[captured_btn] = element
-        messagebox.showinfo('Mapped', f'Button {captured_btn} -> {element}')
+        self.refresh_diagram_status()
+        messagebox.showinfo('Mapped', f'{element} mapped to {captured_btn}')
 
     def show_help(self):
         help_text = (
