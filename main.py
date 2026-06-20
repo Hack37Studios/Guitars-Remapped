@@ -22,6 +22,7 @@ class ControllerMapper:
         pygame.init()
         pygame.joystick.init()
         self.joysticks = []
+        self.selected_joy_index = None
         self._refresh_joysticks()
 
         self.capture_queue = queue.Queue()
@@ -38,23 +39,52 @@ class ControllerMapper:
         self.ui_callback = cb
 
     def _refresh_joysticks(self):
+        old_selected = self.selected_joy_index
         self.joysticks = []
         for i in range(pygame.joystick.get_count()):
             j = pygame.joystick.Joystick(i)
             j.init()
             self.joysticks.append(j)
 
+        if old_selected is None and self.joysticks:
+            self.selected_joy_index = 0
+        elif old_selected is not None:
+            if old_selected >= len(self.joysticks):
+                self.selected_joy_index = 0 if self.joysticks else None
+
+    def set_active_joystick(self, joy_index):
+        if joy_index is None:
+            self.selected_joy_index = None
+        elif 0 <= joy_index < len(self.joysticks):
+            self.selected_joy_index = joy_index
+        else:
+            self.selected_joy_index = None
+
+    def get_active_joystick(self):
+        return self.selected_joy_index
+
     def list_joysticks(self):
         self._refresh_joysticks()
         return [j.get_name() for j in self.joysticks]
 
-    def capture_input(self, timeout=12):
+    def capture_input(self, joy=None, timeout=12):
         if not self.joysticks:
             return {}
 
+        if joy is None:
+            joy = self.selected_joy_index
+
+        if joy is not None:
+            if joy < 0 or joy >= len(self.joysticks):
+                return {}
+            joy_ids = [joy]
+        else:
+            joy_ids = list(range(len(self.joysticks)))
+
         baseline = []
         pygame.event.pump()
-        for joy in self.joysticks:
+        for joy_id in joy_ids:
+            joy = self.joysticks[joy_id]
             baseline.append({
                 'buttons': [joy.get_button(i) for i in range(joy.get_numbuttons())],
                 'hats': [joy.get_hat(i) for i in range(joy.get_numhats())],
@@ -64,20 +94,21 @@ class ControllerMapper:
         start = time.time()
         while time.time() - start < timeout:
             pygame.event.pump()
-            for joy_id, joy in enumerate(self.joysticks):
+            for baseline_index, joy_id in enumerate(joy_ids):
+                joy = self.joysticks[joy_id]
                 for i in range(joy.get_numbuttons()):
                     value = joy.get_button(i)
-                    if value and not baseline[joy_id]['buttons'][i]:
+                    if value and not baseline[baseline_index]['buttons'][i]:
                         return {'type': 'button', 'joy': joy_id, 'index': i}
 
                 for i in range(joy.get_numhats()):
                     value = joy.get_hat(i)
-                    if value != baseline[joy_id]['hats'][i]:
+                    if value != baseline[baseline_index]['hats'][i]:
                         return {'type': 'hat', 'joy': joy_id, 'index': i, 'value': list(value)}
 
                 for i in range(joy.get_numaxes()):
                     value = joy.get_axis(i)
-                    prev = baseline[joy_id]['axes'][i]
+                    prev = baseline[baseline_index]['axes'][i]
                     if abs(value - prev) > 0.25 and abs(value) > 0.2:
                         return {
                             'type': 'axis',
@@ -93,6 +124,9 @@ class ControllerMapper:
     def _poll_loop(self):
         while True:
             for event in pygame.event.get():
+                if self.selected_joy_index is not None and getattr(event, 'joy', None) != self.selected_joy_index:
+                    continue
+
                 # send to UI for live feedback
                 if self.ui_callback:
                     try:
@@ -117,6 +151,9 @@ class ControllerMapper:
             time.sleep(0.006)
 
     def _handle_event(self, event):
+        if self.selected_joy_index is not None and getattr(event, 'joy', None) != self.selected_joy_index:
+            return
+
         # Button press/release: hold while down, release on up
         if event.type == pygame.JOYBUTTONDOWN:
             for m in self.mappings:
@@ -268,7 +305,10 @@ class App(tk.Tk):
         ttk.Label(left_panel, text='Detected Joysticks', font=('Segoe UI', 11, 'bold')).pack(anchor='w', pady=(0, 8))
         self.jlist = tk.Listbox(left_panel, height=4, bg='#2d2d2d', fg='#ecf0f1', font=('Segoe UI', 9))
         self.jlist.pack(fill='x')
-        ttk.Button(left_panel, text='Refresh Devices', command=self.refresh_joysticks).pack(fill='x', pady=(8, 12))
+        ttk.Button(left_panel, text='Refresh Devices', command=self.refresh_joysticks).pack(fill='x', pady=(8, 4))
+        self.active_device_label = ttk.Label(left_panel, text='Active device: none', font=('Segoe UI', 9))
+        self.active_device_label.pack(fill='x', pady=(4, 8))
+        ttk.Button(left_panel, text='Set Active Device', command=self.select_device).pack(fill='x', pady=(0, 12))
 
         ttk.Separator(left_panel, orient='horizontal').pack(fill='x', pady=8)
 
@@ -599,6 +639,29 @@ class App(tk.Tk):
         for n in names:
             self.jlist.insert(tk.END, n)
 
+        active = self.mapper.get_active_joystick()
+        if active is not None and 0 <= active < len(names):
+            self.jlist.selection_clear(0, tk.END)
+            self.jlist.selection_set(active)
+            self.jlist.see(active)
+            self.active_device_label.config(text=f'Active device: {names[active]}')
+        else:
+            self.active_device_label.config(text='Active device: none')
+
+    def select_device(self):
+        sel = self.jlist.curselection()
+        if not sel:
+            messagebox.showwarning('Select Device', 'Please select a device from the list first.')
+            return
+        active = sel[0]
+        self.mapper.set_active_joystick(active)
+        names = self.mapper.list_joysticks()
+        if 0 <= active < len(names):
+            self.active_device_label.config(text=f'Active device: {names[active]}')
+            messagebox.showinfo('Active Device Set', f'Selected active device: {names[active]}')
+        else:
+            self.active_device_label.config(text='Active device: none')
+
     def _start_capture_dialog(self, title, description, callback, timeout=8):
         dialog = tk.Toplevel(self)
         dialog.title(title)
@@ -617,7 +680,7 @@ class App(tk.Tk):
             self.after(0, lambda: callback(captured))
 
         def capture_worker():
-            captured = self.mapper.capture_input(timeout=timeout)
+            captured = self.mapper.capture_input(joy=self.mapper.get_active_joystick(), timeout=timeout)
             finish(captured)
 
         threading.Thread(target=capture_worker, daemon=True).start()
@@ -732,11 +795,12 @@ class App(tk.Tk):
             'Usage:\n'
             '- Connect your guitar controller (Santroller RB/BT or Guitar Hero).\n'
             "- Click 'Refresh Devices' to detect joysticks.\n"
+            "- Select the active guitar from the device list and click 'Set Active Device'.\n"
             "- Click 'Configure Diagram' to map controller buttons to guitar diagram elements.\n"
             "- Click 'Add' to create keyboard mappings.\n"
             "- Press the controller button, then enter the keyboard key (e.g. space, a, left).\n"
             "- Save/load profiles as JSON.\n"
-            "- Click 'Start Listening' to forward controller buttons to keyboard events.\n"
+            "- Click 'Start Listening' to forward controller buttons from the selected device to keyboard events.\n"
         )
         messagebox.showinfo('Help', help_text)
 
